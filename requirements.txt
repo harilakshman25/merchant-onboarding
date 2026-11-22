@@ -1,0 +1,7 @@
+fastapi>=0.110
+uvicorn>=0.27
+cryptography>=42
+httpx>=0.27
+pytest>=8
+pypdf>=4        # optional: text-layer PDF extraction
+# anthropic>=0.40  # optional: multimodal extraction for images / scanned PDFs

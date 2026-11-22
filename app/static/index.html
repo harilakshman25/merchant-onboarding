@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Merchant Onboarding – Operator Console</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#1c2430;--mute:#6b7685;--line:#e3e7ee;--blue:#2d5bd6;--green:#1f8a4c;--amber:#b7791f;--red:#c0392b;--grey:#7b8794}
+*{box-sizing:border-box}body{margin:0;font:14px/1.45 system-ui,-apple-system,Segoe UI,sans-serif;background:var(--bg);color:var(--ink)}
+header{display:flex;align-items:center;gap:12px;padding:12px 20px;background:#14213d;color:#fff;flex-wrap:wrap}
+header h1{font-size:16px;margin:0;font-weight:600}header .sp{flex:1}
+button,select{font:inherit;padding:5px 10px;border-radius:6px;border:1px solid var(--line);background:#fff;cursor:pointer}
+button.primary{background:var(--blue);color:#fff;border-color:var(--blue)}button.danger{color:var(--red)}button:disabled{opacity:.5}
+main{display:grid;grid-template-columns:minmax(380px,1fr) 1.4fr;gap:16px;padding:16px 20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:16px}
+.card h2{font-size:13px;margin:0 0 10px;text-transform:uppercase;letter-spacing:.05em;color:var(--mute)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px}
+.tile{border:1px solid var(--line);border-radius:8px;padding:8px}.tile b{display:block;font-size:20px}.tile span{color:var(--mute);font-size:12px}
+table{width:100%;border-collapse:collapse}td,th{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+tr.row{cursor:pointer}tr.row:hover,tr.sel{background:#eef3ff}th{font-size:12px;color:var(--mute);font-weight:600}
+.badge{display:inline-block;padding:1px 8px;border-radius:99px;font-size:12px;font-weight:600;color:#fff;background:var(--grey)}
+.b-ACTIVE,.b-SUCCEEDED,.b-APPROVED{background:var(--green)}.b-REJECTED,.b-FAILED,.b-PROVISIONING_FAILED,.b-EXHAUSTED{background:var(--red)}
+.b-NEEDS_INFO,.b-MANUAL_REVIEW,.b-TIMED_OUT{background:var(--amber)}.b-VERIFYING,.b-PENDING,.b-PROVISIONING,.b-DOCUMENT_PROCESSING{background:var(--blue)}
+.mute{color:var(--mute)}.mono{font-family:ui-monospace,Menlo,monospace;font-size:12px}
+.checks{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}.check{border:1px solid var(--line);border-radius:8px;padding:8px}
+.bar{height:6px;border-radius:3px;background:var(--line);overflow:hidden;margin-top:3px}.bar i{display:block;height:100%}
+.audit{max-height:320px;overflow:auto}.audit div{padding:3px 0;border-bottom:1px dashed var(--line);font-size:12.5px}
+.warn{background:#fff7e6;border:1px solid #f3d58a;border-radius:8px;padding:8px 10px;margin-bottom:8px}
+.task{border:1px solid var(--line);border-radius:8px;padding:8px;margin-bottom:8px}.task .acts{margin-top:6px;display:flex;gap:6px;flex-wrap:wrap}
+@media(max-width:1000px){main{grid-template-columns:1fr}}
+</style></head><body>
+<header><h1>Merchant Onboarding · Operator Console</h1><span class="sp"></span>
+ <select id="scn"></select><button class="primary" onclick="submitSample()">Submit sample</button>
+ <button onclick="adv(10)">+10s</button><button onclick="adv(35)">+35s (past timeout)</button>
+ <span class="mute" style="color:#aab">auto-refresh 2s</span></header>
+<main>
+ <section>
+  <div class="card"><h2>Operational metrics</h2><div class="tiles" id="tiles"></div></div>
+  <div class="card"><h2>Applications</h2><table id="apps"></table></div>
+  <div class="card"><h2>Review queue</h2><div id="queue"></div></div>
+  <div class="card"><h2>Dead letters</h2><div id="dlq"></div></div>
+ </section>
+ <section id="detail"><div class="card mute">Select an application.</div></section>
+</main>
+<script>
+const KEY=localStorage.opkey||'dev-operator-key';let sel=null;
+const H={'X-Operator-Key':KEY,'Content-Type':'application/json'};
+const api=async(p,m='GET',b)=>{const r=await fetch(p,{method:m,headers:H,body:b?JSON.stringify(b):undefined});const j=await r.json().catch(()=>({}));if(!r.ok)alert(j.detail||r.status);return j};
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const badge=s=>`<span class="badge b-${s}">${s}</span>`;
+const dur=s=>s<90?Math.round(s)+'s':Math.round(s/60)+'m';
+async function init(){const s=await api('/admin/samples');scn.innerHTML=Object.entries(s).map(([k,v])=>`<option value="${k}" title="${esc(v)}">${k} — ${esc(v)}</option>`).join('');refresh()}
+async function submitSample(){const r=await api('/admin/samples/'+scn.value,'POST');if(r.id){sel=r.id}refresh()}
+async function adv(n){await api('/admin/clock/advance?seconds='+n,'POST');refresh()}
+async function decide(id,d,needNotes){let notes='';if(needNotes||d!=='proceed'){notes=prompt('Notes'+(needNotes?' (required)':'')+':','')||'';if(needNotes&&!notes)return}
+ await api(`/review-queue/${id}/resolve`,'POST',{decision:d,reviewer:'operator',notes});refresh()}
+async function replay(id){await api(`/dead-letters/${id}/replay`,'POST');refresh()}
+async function refresh(){
+ const [m,apps,q,dl]=await Promise.all([api('/metrics'),api('/applications'),api('/review-queue'),api('/dead-letters')]);
+ const t=(k,v)=>`<div class="tile"><b>${v}</b><span>${k}</span></div>`;
+ tiles.innerHTML=t('applications',m.applications)+t('straight-through',(m.straight_through_rate*100).toFixed(0)+'%')+t('exception rate',(m.exception_rate*100).toFixed(0)+'%')+
+  t('open reviews',m.open_review_tasks)+t('open dead letters',m.open_dead_letters)+t('duplicate callbacks ignored',m.duplicate_callbacks_ignored)+
+  t('late callbacks accepted',m.late_callbacks_accepted)+t('check timeouts',m.check_timeouts)+
+  Object.entries(m.avg_time_in_state_s||{}).map(([s,v])=>t('avg in '+s,dur(v))).join('');
+ document.getElementById('apps').innerHTML='<tr><th>Merchant</th><th>State</th><th>In state</th><th>Needs / ID</th></tr>'+apps.map(a=>
+  `<tr class="row ${a.id===sel?'sel':''}" onclick="sel='${a.id}';refresh()"><td>${esc(a.legal_name)}<div class="mute mono">${a.id}</div></td><td>${badge(a.state)}${a.open_review?' 👤':''}</td><td>${dur(a.time_in_state_s)}</td><td>${a.merchant_id?`<b>${a.merchant_id}</b>`:esc(a.missing.join('; '))}</td></tr>`).join('');
+ queue.innerHTML=q.length?q.map(t=>`<div class="task"><b>${esc(t.legal_name)}</b> <span class="mute mono">${t.app_id}</span> · waiting ${dur(t.age_s)}
+  <ul>${t.reasons.map(r=>`<li><b>${r.code}</b> ${esc(r.message||'')}${r.matches?' → '+r.matches.map(x=>x.application_id+' ('+x.match_on+')').join(', '):''}</li>`).join('')}</ul>
+  <div class="acts"><button onclick="decide('${t.id}','proceed')">Proceed to verification</button><button onclick="decide('${t.id}','approve')">Approve</button>
+  <button onclick="decide('${t.id}','retry')">Retry providers</button><button onclick="decide('${t.id}','request_info',1)">Request info</button><button class="danger" onclick="decide('${t.id}','reject',1)">Reject</button></div></div>`).join(''):'<span class="mute">Nothing waiting.</span>';
+ dlq.innerHTML=dl.length?'<table>'+dl.map(d=>`<tr><td>${d.id}</td><td>${d.kind}</td><td class="mono">${d.app_id||''}</td><td>${esc(d.reason)}</td><td>${d.status==='OPEN'?`<button onclick="replay(${d.id})">Replay</button>`:d.status}</td></tr>`).join('')+'</table>':'<span class="mute">Empty.</span>';
+ if(sel)detail_(await api('/applications/'+sel))}
+function detail_(a){
+ const f=a.form,b=f.bank||{};
+ const checks=Object.entries(a.checks).map(([k,c])=>`<div class="check"><b>${k.toUpperCase()}</b> ${badge(c.status)}<div class="mute">${c.depends_on.length?'after '+c.depends_on.join(', '):'immediately'}</div>
+  <div class="mono">${c.attempts.map(x=>`#${x.attempt} ${x.status}${x.late?' (late)':''}`).join('<br>')||'—'}</div>${c.result&&(c.result.reason||c.result.band)?`<div>${esc(c.result.reason||c.result.band)}</div>`:''}</div>`).join('');
+ const docs=a.documents.map(d=>{const e=d.extraction;return `<div style="margin-bottom:8px"><b>${d.doc_type}</b> ${badge(e.status==='OK'?'SUCCEEDED':e.status==='UNREADABLE'?'FAILED':'TIMED_OUT').replace(/>(SUCCEEDED|FAILED|TIMED_OUT)</,'>'+e.status+'<')} <span class="mute">${e.method} · quality ${e.quality}${d.status==='SUPERSEDED'?' · superseded':''}</span>
+  ${Object.entries(e.fields).map(([k,v])=>`<div>${k}: <span class="mono">${esc(v.value)}</span><div class="bar"><i style="width:${v.confidence*100}%;background:${v.confidence<.8?'var(--amber)':'var(--green)'}"></i></div></div>`).join('')}
+  ${e.issues.map(i=>`<div class="mute">⚠ ${esc(i.message)}</div>`).join('')}</div>`}).join('');
+ detail.innerHTML=`<div class="card"><h2>${esc(f.legal_name)} ${badge(a.state)}</h2>
+  <div class="mono mute">${a.id} · in state ${dur(a.time_in_state_s)} · PAN ${esc(f.pan)} · GSTIN ${esc(f.gstin)} · A/c ${esc(b.account_number)} ${esc(b.ifsc)}</div>
+  ${a.issues.items&&a.issues.items.length&&a.state==='NEEDS_INFO'?`<div class="warn"><b>Missing / action required from merchant</b><ul>${a.issues.items.map(i=>`<li>${esc(i.message)}</li>`).join('')}</ul></div>`:''}
+  ${a.merchant?`<div class="warn" style="background:#e9f7ef;border-color:#a8d9bb">Merchant ID <b>${a.merchant.merchant_id}</b> · payout ${esc(a.merchant.payout_account_masked)}</div>`:''}
+  ${a.duplicates.length?`<div class="warn">Possible duplicates: ${a.duplicates.map(d=>d.application_id+' ('+d.match_on+')').join(', ')}</div>`:''}</div>
+  <div class="card"><h2>Verification checks</h2><div class="checks">${checks}</div></div>
+  <div class="card"><h2>Extracted documents (values masked)</h2>${docs||'—'}</div>
+  <div class="card"><h2>Audit trail</h2><div class="audit">${a.audit.map(e=>`<div><span class="mute mono">${e.time.slice(11,23)}</span> <b>${e.event}</b> ${e.from_state?e.from_state+' → <b>'+e.to_state+'</b>':''} <span class="mute">${esc(e.actor)}</span> <span class="mono mute">${esc(JSON.stringify(e.detail)).slice(0,220)}</span></div>`).join('')}</div></div>`}
+init();setInterval(refresh,2000);
+</script></body></html>
